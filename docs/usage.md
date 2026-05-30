@@ -4,6 +4,8 @@ Remo is a small and defensive command-line tool for safely removing directory co
 
 It was created for situations where you often need to clean folders such as `dist`, `deploy`, `build`, or a specific website directory inside `/var/www`.
 
+Remo is maintained by [Arriminum](https://arriminum.com).
+
 The main goal is simple:
 
 > Make common cleanup tasks easy, but make dangerous deletions hard.

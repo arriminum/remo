@@ -4,6 +4,8 @@ Remo is a small and defensive command-line tool for safely removing directory co
 
 It was created to make common cleanup tasks easy, while making dangerous deletions hard.
 
+Remo is maintained by [Arriminum](https://arriminum.com).
+
 ---
 
 ## What It Does
@@ -158,6 +160,8 @@ sudo apt install shellcheck shfmt make
 ## License
 
 MIT License.
+
+Copyright (c) 2026 [Arriminum](https://arriminum.com).
 
 See [LICENSE](LICENSE).
 
