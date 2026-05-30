@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+MODE="contents"
+TARGET=""
+DRY_RUN="false"
+YES="false"
+
+print_help() {
+  cat <<'EOF'
+remo - Safely remove directories or directory contents for build/deploy scripts.
+
+Usage:
+  remo [options] <directory>
+
+Options:
+  --contents     Remove everything inside the directory, but keep the directory itself.
+                 This is the default behavior.
+
+  --dir          Remove the directory itself.
+
+  --recreate     Remove the directory itself and create it again.
+
+  --dry-run      Show what would be deleted, but do not delete anything.
+
+  --yes, -y      Do not ask for confirmation on --dir or --recreate.
+
+  --help, -h     Show this help message.
+
+  --version, -v  Show version.
+
+Examples:
+  remo ../deploy
+  remo --contents /var/www/my-site
+  remo --recreate --yes ../deploy
+  remo --dir --yes /tmp/my-build-folder
+  remo --dry-run ../deploy
+
+Safety rules:
+  - Refuses empty paths.
+  - Refuses root and important Linux directories.
+  - Refuses the current user's home directory.
+  - Refuses common user folders such as ~/src, ~/Downloads and ~/Documents.
+  - Refuses symlinks.
+  - Resolves the real absolute path before deleting.
+  - Refuses shallow paths.
+  - By default, removes only directory contents.
+EOF
+}
+
+print_version() {
+  echo "remo $VERSION"
+}
+
+is_forbidden_path() {
+  local path="$1"
+
+  case "$path" in
+    "/"|\
+    "/bin"|\
+    "/boot"|\
+    "/dev"|\
+    "/etc"|\
+    "/home"|\
+    "/lib"|\
+    "/lib64"|\
+    "/media"|\
+    "/mnt"|\
+    "/opt"|\
+    "/proc"|\
+    "/root"|\
+    "/run"|\
+    "/sbin"|\
+    "/srv"|\
+    "/sys"|\
+    "/tmp"|\
+    "/usr"|\
+    "/var"|\
+    "/var/www"|\
+    "$REAL_HOME"|\
+    "$REAL_HOME/lib"|\
+    "$REAL_HOME/src"|\
+    "$REAL_HOME/Downloads"|\
+    "$REAL_HOME/Documents"|\
+    "$REAL_HOME/Desktop"|\
+    "$REAL_HOME/Projects"|\
+    "$REAL_HOME/projetos")
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+path_depth() {
+  local path="$1"
+
+  path="${path#/}"
+
+  if [[ -z "$path" ]]; then
+    echo 0
+    return
+  fi
+
+  awk -F'/' '{ print NF }' <<< "$path"
+}
+
+confirm_dangerous_action() {
+  if [[ "$YES" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ "$MODE" == "contents" ]]; then
+    return 0
+  fi
+
+  echo "You are about to remove: $REAL_TARGET"
+  echo "Mode: $MODE"
+  read -r -p "Type 'yes' to continue: " CONFIRM
+
+  if [[ "$CONFIRM" != "yes" ]]; then
+    echo "Aborted."
+    exit 1
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --contents)
+      MODE="contents"
+      shift
+      ;;
+    --dir)
+      MODE="dir"
+      shift
+      ;;
+    --recreate)
+      MODE="recreate"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN="true"
+      shift
+      ;;
+    --yes|-y)
+      YES="true"
+      shift
+      ;;
+    --help|-h)
+      print_help
+      exit 0
+      ;;
+    --version|-v)
+      print_version
+      exit 0
+      ;;
+    -*)
+      echo "Error: unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "$TARGET" ]]; then
+        echo "Error: only one directory can be provided." >&2
+        exit 1
+      fi
+
+      TARGET="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$TARGET" ]]; then
+  echo "Error: no directory provided." >&2
+  echo "Run: remo --help" >&2
+  exit 1
+fi
+
+if [[ "$TARGET" == "/" ]]; then
+  echo "Error: refusing to operate on /" >&2
+  exit 1
+fi
+
+if [[ -L "$TARGET" ]]; then
+  echo "Error: refusing to operate on symlink: $TARGET" >&2
+  exit 1
+fi
+
+if [[ "$MODE" == "contents" ]]; then
+  if [[ ! -d "$TARGET" ]]; then
+    echo "Error: directory does not exist: $TARGET" >&2
+    exit 1
+  fi
+else
+  PARENT_DIR="$(dirname -- "$TARGET")"
+
+  if [[ ! -d "$PARENT_DIR" ]]; then
+    echo "Error: parent directory does not exist: $PARENT_DIR" >&2
+    exit 1
+  fi
+fi
+
+REAL_TARGET="$(realpath -m -- "$TARGET")"
+REAL_HOME="$(realpath -m -- "$HOME")"
+
+if is_forbidden_path "$REAL_TARGET"; then
+  echo "Error: refusing to operate on protected path: $REAL_TARGET" >&2
+  exit 1
+fi
+
+DEPTH="$(path_depth "$REAL_TARGET")"
+
+if (( DEPTH < 2 )); then
+  echo "Error: refusing to operate on a shallow system path: $REAL_TARGET" >&2
+  exit 1
+fi
+
+if [[ "$REAL_TARGET" == "$REAL_HOME/"* ]]; then
+  if (( DEPTH < 4 )); then
+    echo "Error: refusing to operate on a shallow path inside home: $REAL_TARGET" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$REAL_TARGET" == "/var/www/"* ]]; then
+  if (( DEPTH < 3 )); then
+    echo "Error: refusing to operate on a shallow path inside /var/www: $REAL_TARGET" >&2
+    exit 1
+  fi
+fi
+
+echo "Target: $REAL_TARGET"
+echo "Mode: $MODE"
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "Dry run enabled. Nothing will be deleted."
+
+  if [[ "$MODE" == "contents" ]]; then
+    find "$REAL_TARGET" -mindepth 1 -maxdepth 1 -print
+  else
+    echo "$REAL_TARGET"
+  fi
+
+  exit 0
+fi
+
+confirm_dangerous_action
+
+case "$MODE" in
+  contents)
+    find "$REAL_TARGET" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    ;;
+
+  dir)
+    if [[ ! -d "$REAL_TARGET" ]]; then
+      echo "Error: directory does not exist: $REAL_TARGET" >&2
+      exit 1
+    fi
+
+    rm -rf -- "$REAL_TARGET"
+    ;;
+
+  recreate)
+    rm -rf -- "$REAL_TARGET"
+    mkdir -p -- "$REAL_TARGET"
+    ;;
+esac
+
+echo "Done."

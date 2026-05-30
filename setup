@@ -1,0 +1,143 @@
+#!/bin/sh
+
+set -e
+
+rhlog() {
+    [ -z "$1" ] && return
+    time="$(date +'%Y-%m-%d %H:%M:%S')"
+    message="[MEREDITH] $time $1"
+    echo "$message"
+}
+
+
+APP_NAME="html"
+ROOT_DIR="html"
+INSTALL_DIR="/usr/local/bin/pionier"
+BACKUP_DIR="/var/local/ariminum/bkp"
+CONF_DIR="/etc/pionier"
+
+
+if [ -z "$1" ]; then
+    echo "[ERROR] Usage: setup APPUSER"
+    echo "Example: setup caesar"
+    exit 1
+fi
+
+APPUSER="$1"
+HOME_DIR="/home/$APPUSER"
+DEPLOY_DIR="$HOME_DIR/deploy"
+
+if ! getent passwd "$APPUSER" > /dev/null 2>&1; then
+    echo "[ERROR] Invalid user: $APPUSER"
+    exit 1
+fi
+
+
+rhlog "Creating directories"
+mkdir -p "$BACKUP_DIR"
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$DEPLOY_DIR"
+mkdir -p "$CONF_DIR"
+chown -R "$APPUSER:$APPUSER" "$BACKUP_DIR"
+chmod -R 755 "$BACKUP_DIR"
+rhlog "Directories created!"
+
+
+rhlog "Creating .bashrc backup"
+cp "$HOME_DIR/.bashrc" "$HOME_DIR/.bashrc_backup_$(date +%Y%m%d%H%M%S)"
+rhlog ".bashrc backup created!"
+
+
+rhlog "Copying files to $INSTALL_DIR"
+cp -r bin/* "$INSTALL_DIR/"
+chmod -R 755 "$INSTALL_DIR"
+
+
+
+rhlog "Copying files to $DEPLOY_DIR"
+
+cp -fr deploy/* "$DEPLOY_DIR/"
+
+if [ -d "$DEPLOY_DIR/$APP_NAME" ]; then
+    rm -r "${DEPLOY_DIR:?}/${APP_NAME:?}"
+fi
+
+mv "$DEPLOY_DIR/APP_NAME" "$DEPLOY_DIR/$APP_NAME"
+chown -R "$APPUSER:$APPUSER" "$DEPLOY_DIR/$APP_NAME"
+sed -i "s/default/$APP_NAME/g" "$DEPLOY_DIR/$APP_NAME/APP_NAME"
+sed -i "s/html/$ROOT_DIR/g" "$DEPLOY_DIR/$APP_NAME/ROOT_DIR"
+
+
+
+rhlog "Copying files to $CONF_DIR"
+
+cp conf/base "$CONF_DIR/nginx-base"
+cp conf/base.conf "$CONF_DIR/apache-base.conf"
+cp conf/security.conf "$CONF_DIR/nginx-security.conf"
+cp conf/wp-security.conf "$CONF_DIR/nginx-wp-security.conf"
+cp conf/proxy_params "$CONF_DIR/nginx-proxy_params"
+
+
+
+rhlog "Installing conf files..."
+
+sudo cp "$CONF_DIR/nginx-base" /etc/nginx/sites-available/base
+sudo cp "$CONF_DIR/nginx-security.conf" /etc/nginx/security.conf
+sudo cp "$CONF_DIR/nginx-wp-security.conf" /etc/nginx/wp-security.conf
+sudo cp "$CONF_DIR/nginx-proxy_params" /etc/nginx/proxy_params
+sudo cp "$CONF_DIR/apache-base.conf" /etc/apache2/sites-available/base.conf
+
+
+
+rhlog "Updating .bashrc"
+sed -i '/# >>> pionier start/,/# <<< pionier end/d' "$HOME_DIR/.bashrc"
+
+{
+    echo "# >>> pionier"
+    echo "export PATH=\$PATH:/usr/local/bin/pionier"
+    echo "export PATH=\$PATH:/usr/local/bin/pionier/servius"
+    echo "alias nginx.reload=\"sudo service nginx reload\""
+    echo "alias nginx.restart=\"sudo service nginx stop ; sudo service nginx start\""
+    echo "alias apache.reload=\"sudo service apache2 reload\""
+    echo "alias apache.restart=\"sudo service apache2 stop ; sudo service apache2 start ; sudo service php8.3-fpm restart\""
+    echo "alias memcached.restart=\"sudo service memcached restart\""
+    echo "# <<< pionier"
+    printf "\n"
+} >> "$HOME_DIR/.bashrc"
+
+rhlog ".bashrc updated!"
+
+
+EXPECTED_FILES="check-updates chperm wpperm meredith printerror printinfo println update \
+servius/create-nginx-site servius/create-apache-site \
+servius/setup-apache-site servius/setup-nginx-site"
+
+
+rhlog "Checking install..."
+
+for file in $EXPECTED_FILES; do
+    fullpath="$INSTALL_DIR/$file"
+
+    if [ ! -f "$fullpath" ]; then
+        echo "[ERROR] File not found: $fullpath"
+        exit 2
+    fi
+
+    if [ ! -x "$fullpath" ]; then
+        chmod +x "$fullpath" || {
+            echo "[ERROR] Could not make executable: $fullpath"
+            exit 2
+        }
+    fi
+done
+
+
+#INSTALL_SOURCE_DIR=$(pwd)
+#echo "Cleaning install folder: $INSTALL_SOURCE_DIR"
+#rm -rf "$INSTALL_SOURCE_DIR"
+
+printf "\nInstallation for %s completed successfully!\n" "$APPUSER"
+
+echo "Run: source $HOME_DIR/.bashrc"
+
+exit 0
